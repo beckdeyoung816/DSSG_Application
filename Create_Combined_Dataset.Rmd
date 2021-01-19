@@ -1,0 +1,609 @@
+---
+title: "Arsenic Research"
+output: html_notebook
+---
+
+***********************************************************************************************************   
+# Work Flow
+
+## What to do when a new dataset is received
++ Save dataset in the **Data** Folder
+    + Save paper that data came from in **Papers** folder
++ Open up data
+    + Make a copy of the original dataset in a new sheet
+        + Rename original sheet as `raw` and the sheet that you will make edits in as `Modified`
+    + In the `Modified` tab
+        + Insert a row below the original parameter names, without deleting them
+        + Refer to the **Params_and_Units** workbook in the **Data2** Folder
+            + In the **Param_List** sheet, there are the consistent parameter names we use
+            + In the **Unit_List** sheet, there are the consistent unit names we use
+        + Label the columns in the `Modified` sheet as Parameter__Unit, unless there is no unit such as with Lat, Long, Sample_ID.
+        + Columns that are unique to the current dataset should be labeled as they are in the original dataset. For example, one dataset had a column `Mouza` and we kept that column header as `Mouza`
+            + First check if there is not a similar variable we already have
+                + These will be in the *Description_Parameters* column in the **Param_List**
+                    + For example, we do not want two separate variables for *Well Number* and *Well ID*
+            + Any parameters or units that are not included in **Param_List** or **Unit_List** should be added if they are chemicals or if they most likely will be present in another future dataset
+                + If it is a chemical and is listed in units other than mM, it should be added to the  **Conversions** sheet on top of the **Param_List**
+                + Should this chemical be comprised of multiple elements, each element should be separated by a comma in the Harmonized_Params column
+                    + For example, NO3 should be listed as N,O,O,O
+                    + We need to do this to enable us to calculate the molar mass of the chemical for conversions
+        + If a `Country` column is not listed, it should be added
+        + A `Study_ID` column should be added as well with the name of the study
+        + A unique `Sample_ID` should be created for each observation
+            + This should be done using this format: StudyID-1...StudyID-99
+            + If there are already identifiers in the datasets, they should be titled as either `Well_ID` or `Sample_ID2`
+                + If the identifier appears to represent a certain well that may have been sampled another time, we want that to be the Well_ID to allow for comparison over time at the same location
+                + If the identifier appears to be solely for purposes of uniquely identifiying the sample, then this should be Sample_ID2
+                    + We want to keep these identifiers, while also making our own identifiers consistent with the other datasets
+        + Lastly, a `Water_Source` column should be added and should include `GW` for groundwater (wells), `SW` for surface water(rivers or ponds), or `Precip` for precipiation
++ Should detection limits be listed in either the paper or the data, these should be added to the **Detection_Limits** file in the **Data2** folder including the study ID, parameter, and detection limit
++ Finally, this dataset should be added to **Datasets_List** inside of **Data2** folder
+    + The dataset should be listed as `datasetname.xlsx`
+        + Datasets should not be in .csv format unless they are special cases and will then need to be accounted for
+            + These datasets should be inserted into the top rows of the **Datasets_List** where the other csv`s are located
+            + Inside of the code chunk "Loading in Data", the variable "csv_amt" should be updated with the new amount of csvs
+    + The skip should be the amount of rows before the modified parameters so that these parameters are the column headers when loaded into R
+    + The sheet should always be listed as `Modified` as we should have this as the sheet name of the dataset we just edited
+
+    
+## Snags in R with new datasets
+
+The below script should account for all new datasets if the above steps are followed, but there are a few common snags that follow with new datasets
+
+These snags should be evident in the `Check` datasets that are created while running the script
+
++ If Check1 contains any values, this means that one of the newly added datasets contains a different version of noting values below the detection limit
+    + We should go into the datasets that are listed in Check1 and look for these differing notations
+        + These should be added to code chunks "Create Flag Column", "Save Values Listed Below Detection Limit", and "Fixing Detection Limits" in the same format as the other `bdl`s
++ If Check 2 contains any values, this means that one of the newly added datasets contains a different version of noting values that are Not Detected or No data such as `no data` or `n.d.`
+    + We should go into the datasets listed in Check2 and looking for these differing notations
+        + These should be added to code chunk "Remove Odd NAs" in the same format
+        + If inside of the dataset we are checking, the box that is causing the issue contains a different reason than a `no data` for making this value show up in check2, it should be accounted for
+            + For example, some datasets have included unusual fonts that have caused problems with R, such as one of the datasets having their `<` not being accounted for, and a few having unrecognizable negative signs
+                + These weird occurrences should be copied and pasted into the chunks 5 and 6
++ If Check3 contains any values, this means that one of the newly added datasets has a parameter with a unit that is not accounted for in code chunk "Conversions Not into mM" or "Conversions into mM". 
+    + Only add conversions for parameters that we want to change into mM
++ Check4 is used to check if the finished data spreads properly
+    + If this code does not run because there are `Duplicate Identifiers` this means that one of the newly added datasets has two column headers of the same name
+        + To check which dataset has this duplicate column, go into the console and enter check4[row1] and check4[row2] where row1 and row2 are listed in the error as (row1, row2)
+           + After finding the right dataset, see why there is a duplicate column and resolve the issue
+              + It may be due to a typo, or maybe the dataset actually measured the same parameter twice, and in that case, one of the columns should be removed
+              
+
+            
+*********************************************************************************************************** 
+# Start of Script
+
+<br/>
+
+```{r Packages to Install}
+library(tidyverse)
+library(readxl)
+library(stringr)
+library(PeriodicTable)
+library(list)
+```
+
+<br/>
+
+# Loading in the Data
+
+<br/>
+
+```{r List of Datasets, message=F}
+
+dataset_list <- read_excel("../Data2/Dataset_list.xlsx")
+```
+
+<br/>
+
+## Looping through our datasets and creating one large gathered dataset
+
+<br/>
+
+```{r Loading in Data, warning=FALSE, message=F}
+
+len <- length(dataset_list$Dataset)
+csv_amt <- 7 # Change this factor if another csv is added to the dataset list
+
+for (dataset in (1:len)) {
+  
+          if (dataset <= csv_amt){
+            
+             # Load in the csvs
+            
+            temp_data <- read_csv(dataset_list$Dataset[dataset])
+            
+          } else {
+              
+         temp_data <- read_excel(sheet = dataset_list$Sheet[dataset],
+                                  path = paste0("../Data/",dataset_list$Dataset[dataset]), 
+                                  skip = dataset_list$Skip[dataset])}
+  
+          # Do not gather columns that are common across all datasets
+          
+          temp_data <- gather(temp_data,
+                              key = 'Parameter',
+                              value = 'Value',
+                              -Country,
+                              -Study_ID,
+                              -Sample_ID,
+                              -Water_Source) %>% 
+            mutate("Value" = as.character(Value)) # Change all values to string to allow us to bind rows
+          
+          # Create the all_data dataset which will only contain the first dataset on the first loop
+          # On the rest of the loops, it will add the next dataset into all_data
+          
+          if (dataset == 1) all_data <- temp_data
+          else all_data <- bind_rows(all_data,temp_data)
+          
+}
+
+rm(temp_data,dataset_list,len,csv_amt,dataset)
+```
+
+
+```{r Create Unit Column, warning=F}
+
+# Create a unit column by separating the units from the parameters
+
+all_data_sep <- all_data %>% 
+  separate(Parameter, sep = "__", into = c('Parameter','Unit'))
+```
+
+<br/>
+
+## Clearing up the flags
+
+<br/>
+
+```{r Create Flag Column}
+
+# Create a column that says if there is a flag or not
+# We are considering all values with some version of 'bdl' as having a '<' flag
+
+all_data_flag <- all_data_sep %>% 
+  mutate('Flag' = case_when(is.na(Unit) ~ "None", # Some parameters such as "Notes" sometimes have < or > in them, so we need to account for that
+                            str_detect(Value, '<') ~ '<',
+                            str_detect(Value, '>') ~ '>',
+                            str_detect(Value, '＜') ~ '<',
+                            str_detect(str_to_lower(Value), 'bdl') ~ '<',
+                            TRUE ~ 'None'))
+```
+
+```{r Create Separate Dataset with only Flags}
+
+# Create a new dataset with only flagged values to make it easier to remove these flags
+# We remove the flags and spaces so there are only numbers and versions of 'bdl' left in the value column
+
+only_flags <- all_data_flag %>% 
+  filter(Flag %in% c('<', '>')) %>% 
+  mutate('Value' = str_replace_all(Value, "<", "")) %>% 
+  mutate("Value" = str_replace_all(Value, " ", "")) %>% 
+  mutate("Value" = str_replace_all(Value, ">", "")) %>% 
+  mutate('Value' = str_replace_all(Value, "＜", "")) 
+  
+```
+
+```{r Save Values Listed Below Detection Limit, warning=F}
+
+# Save the values that are listed as below detection limit, some of these will have reported detection limits reported in the study that we can use to fill these values
+
+DL <- only_flags %>% 
+  filter(str_to_lower(Value) %in% c("dl", "bdl")) %>% 
+  dplyr::select(-Flag)
+```
+
+<br/>
+
+## Convert values to numeric for nonflagged values
+
+<br/>
+
+```{r Dataset Without Flags, warning=F}
+
+# Create another dataset with only the non flagged values which we will later join back together with the flagged dataset after we remove and account for these flags
+
+no_flags <- all_data_flag %>% 
+  filter(Flag == 'None') %>% dplyr::select(-Flag)
+```
+
+<br/>
+
+# Fixing Values Below Detection Limits
+
+<br/>
+
+```{r Import Dataset With Detection Limits, warning=F}
+
+# Load in spreadsheet that contains detection limits by study by parameter when available
+
+det_limits <- read_excel('../Data2/Detection_Limits.xlsx')
+```
+
+```{r Substitute in Corect Detection Limits}
+
+# Dataset where detection limits are replaced with real values when possible
+
+# Create lists of only the unique parameters
+
+study_list <- unique(DL$Study_ID)  
+
+# Loop through all the unique studies
+
+for (study in study_list) {
+  if (study %in% det_limits$Study_ID) {
+    
+    # Create list of unique parameters that we have the detection limit for in this study
+    
+    param_list <- unique(det_limits$Parameter[det_limits$Study_ID == study])
+    
+    # Loop through this list of parameters
+    
+    for (param in param_list) {
+      
+      
+      if (param %in% DL$Parameter[DL$Study_ID == study]) {
+
+# Locate the correct detection limit value from the detection limit dataset
+
+        id <- det_limits %>%
+          filter(Study_ID == study & Parameter == param) %>%
+          dplyr::select(Detection_Limit)
+        
+
+# Replace each possible occurence of 'bdl' that has a detection limit stated
+
+          only_flags$Value[(only_flags$Study_ID == study) & (only_flags$Parameter == param)] <- as.character(id$Detection_Limit)
+
+       }
+     }
+  }
+}
+
+rm(study_list, param,study, param_list, id, det_limits)
+```
+
+
+```{r Estimate Detection Limits}
+
+# 'factor' is the value which we are using to estimate the values for the flags
+
+factor <- 2
+
+# Convert to numeric and divide or multiple by 'factor' to give rough estimates
+
+only_flags <- only_flags %>% 
+  filter(str_to_lower(Value) != "dl" & str_to_lower(Value) != "bdl") %>% 
+  mutate("Value" = case_when(Flag == "<" ~ (as.numeric(Value))/ factor, 
+                             Flag == ">" ~ as.numeric(Value) * factor)) %>% 
+  dplyr::select(-Flag)
+
+# Values will only occur in check1 when the Value column in the only_flags dataset contains a non numeric value
+
+check1 <- only_flags %>% filter(is.na(Value)) 
+
+rm(factor)
+```
+
+```{r As Detection Limit}
+# We want to have a column with a binary representation if As is below the detection limit or not
+# Represented as binary
+
+# As_params <- c("As", 
+#                "As_unfiltered", 
+#                "As_kit",
+#                "As_diss", 
+#                "As3", 
+#                "As5", 
+#                "As_arsenator",
+#                "As_unfiltered_recensored",
+#                "As__recensored")
+# 
+# only_flags$As_flag[only_flags$Parameter %in% As_params] <- 1
+# 
+# no_flags$As_flag[no_flags$Parameter %in% As_params] <- 0
+
+
+# FIGURE OUT HOW TO NOTATE FOR AN ENTIRE COLUMN - Sample ID
+```
+
+```{r Recombine Entire Dataset With Fixed Flags}
+
+# Make Value column of only_flags back into string so that we can bind to no_flags
+# After this bind, we have the full dataset back together, but with all flags removed and accounted for
+
+only_flags <- only_flags %>% 
+  mutate("Value" = as.character(Value))
+
+all_data <- bind_rows(no_flags, only_flags)
+```
+
+
+```{r Remove Odd NAs}
+
+# Remove weird instances of datasets listing their NA's
+
+# No_data contains all values that do not have data, but are listed as a string in their original file
+
+# Here we are creating no_data as its own dataset and then by antijoining it to the full dataset,
+    # all of these weird occurences of versions of 'NA' are removed
+
+no_data <- all_data %>% 
+  filter(str_to_lower(Value) %in% c("na", 
+                                    "ns", 
+                                    "no data",
+                                    "-", 
+                                    " -", 
+                                    "–",
+                                    " –" ,
+                                    "n.d.", 
+                                    "n.m.", 
+                                    "*", 
+                                    "a", 
+                                    "nd", 
+                                    "/", 
+                                    "n.a.",
+                                    "n/d",
+                                    "n/a",
+                                    "b.d.",
+                                    "n",
+                                    "no",
+                                    "?",
+                                    "del",
+                                    "nc",
+                                    "#n/a",
+                                    "nr",
+                                    "--")) 
+
+weird_nas_removed <- all_data %>% anti_join(no_data)
+```
+
+```{r Create Dataset with No Units}
+
+# New dataset with only parameters with no units e.g. pH or Country
+
+no_unit <- weird_nas_removed %>% filter(is.na(Unit))
+```
+
+<br/>
+
+# Unit Conversion
+
+<br/>
+
+```{r Create Dataset with Units}
+
+# Create dataset with only parameters with units 
+
+unit <- weird_nas_removed[!is.na(weird_nas_removed$Unit),] %>% 
+  filter(str_to_lower(Value) != 'bdl' & str_to_lower(Value) != 'dl') %>%
+
+  # Change all values to numeric (For instance, Country is unitless and not included)
+
+  mutate("Value" = as.numeric(Value))
+
+
+# check2 only contains values when something in the Value column of weird_nas_removed is not possible to be converted to numeric. This most likely occurs when a new study has a way for saying 'NA' that we have not accounted for. This could also occur when a study has a weird font for negative signs and those should be replaced in excel
+
+check2 <- unit %>% filter(is.na(Value))
+```
+
+
+
+```{r Import Dataset With Parameters To Convert}
+
+# Dataset with parameters we want to convert and their harmonized names for easy molar mass calculation
+
+conversion_data <- read_excel("../Data2/Params_and_Units.xlsx", sheet = "Conversions")
+```
+
+<br/>
+
+## Conversions not into mM
+
+<br/>
+```{r Conversions Not into mM}
+
+# Initiate harmonized parameter and molar mass columns to be altered later on 
+Converted_units <- unit %>% mutate("Molar_Mass" = 0)
+
+# TDS does not have a molar mass and should not be converted to mM, but all should be in mgL
+
+Converted_units$Value[Converted_units$Parameter == 'TDS' & Converted_units$Unit == 'gL'] <- Converted_units$Value[Converted_units$Parameter == 'TDS' & Converted_units$Unit == 'gL'] * 1000
+
+Converted_units$Unit[Converted_units$Parameter == 'TDS' & (Converted_units$Unit %in% c('gL',"ppm"))] <- 'mgL'
+
+# Measurements in mScm should be in uScm
+
+Converted_units$Value[Converted_units$Unit == 'mScm'] <- Converted_units$Value[Converted_units$Unit == 'mScm'] * 1000
+Converted_units$Unit[Converted_units$Unit == 'mScm'] <- 'uScm'
+
+# Convert all feet and inches to meters
+
+Converted_units$Value[Converted_units$Unit == 'ft'] <- Converted_units$Value[Converted_units$Unit == 'ft'] * 0.3048
+Converted_units$Unit[Converted_units$Unit == 'ft'] <- 'm'
+
+Converted_units$Value[Converted_units$Unit == 'in'] <- Converted_units$Value[Converted_units$Unit == 'in'] * 0.3048 / 12
+Converted_units$Unit[Converted_units$Unit == 'in'] <- 'm'
+```
+
+<br/>
+
+## Conversions into mM
+
+<br/>
+
+### Harmonize Parameters to allow for molar mass conversions
+
+<br/>
+
+This needs to be done because chemicals such as HCO3 do not have simple molar masses to calculate in r
+
+<br/>
+
+```{r Harmonize Paramters}
+Converted_units <- left_join(Converted_units, conversion_data, by = c("Parameter"))
+```
+
+
+### Get Molar Masses
+
+<br/>
+
+```{r Calculate Molar Mass}
+
+# Loop through each parameter from the previously loaded conversion_data with the harmonized parameters
+
+for (param in conversion_data$Harmonized_Params){
+  
+  # dplyr::select only the harmonized parameter name we want to use
+  
+    id <- Converted_units %>% 
+      filter(Harmonized_Params == param) %>% 
+      dplyr::select(Harmonized_Params)
+    
+    # Using the harmonized parameters, we want to split it into multiple different sets of strings
+    # This is because we need to take the molar mass of each individual element in the parameter
+    # For example, the harmonized parameter of 'N,O,O,O' needs to be split into 'N' 'O' 'O' 'O'
+    # The molar mass will be calculated for each element and summed and this value is replaced into the dataset
+    
+    Converted_units$Molar_Mass[Converted_units$Harmonized_Params == param] <- sum(mass(
+    unlist(strsplit(id$Harmonized_Params[1], split = ','))))
+}
+
+rm(id, param)
+```
+
+
+```{r Conversions into mM}
+
+# List of parameters to change into mM
+
+param_list <- as.list(conversion_data$Parameter)
+
+for (param in param_list){
+  
+      # Create a unique list of units for each parameter
+  
+      unit_list <- Converted_units %>% filter(Parameter == param) 
+      unit_list <- unique(unit_list$Unit)
+      
+      for (unit in unit_list) {
+          
+          # We do not want to convert the values if the unit is already in mM
+        
+          if (!unit %in% c('mM','percent')){
+              
+              # These are the calculations for each conversion
+            
+              Converted_units <- Converted_units %>%
+              mutate('Value' = if_else((Unit == unit & Parameter == param),
+                                       case_when(unit %in% c('mgL', 'ppm') ~ (Value / Molar_Mass),
+                                                 
+                                                 unit %in% c('ugL', 'ppb') ~ (Value / Molar_Mass / 1000),
+                                                 
+                                                 unit == 'uM' ~ (Value / 1000),
+                                                 
+                                                 unit == "M" ~ (Value * 1000),
+                                                 
+                                                 unit == 'nM' ~ (Value / 1000 / 1000),
+                                                 
+                                                 unit %in% c('gL', 'ppt') ~ (Value / Molar_Mass * 1000)), 
+                      Value),
+                     
+                     # Only if the parameter is changed do we want to change the units to mM
+                     
+                     'Unit' = if_else((Unit == unit & Parameter == param),
+                                       'mM', Unit))
+          }
+     } 
+}
+
+Converted_units <- Converted_units %>% dplyr::select(-Harmonized_Params, - Molar_Mass) 
+
+rm(unit, param, unit_list, param_list)
+```
+
+<br/>
+
+```{r Conversion Check}
+
+# check3 is used to see if there are any parameters that were not converted to desired units
+# Many of the parameters we do not want to convert and their units are listed below
+
+check3 <- Converted_units %>% filter(Unit != 'mM', 
+                                     Unit != 'C',
+                                     Unit != 'm',
+                                     Unit != 'mV', 
+                                     Unit !='uScm', 
+                                     Unit != 'permil', 
+                                     Unit !='FM', 
+                                     Unit !='TU', 
+                                     Unit !='CFU', 
+                                     Unit !='yrs', 
+                                     Unit !='ratio',
+                                     Unit != 'NTU',
+                                     Unit != 'MPN',
+                                     Parameter != 'Abs_256',
+                                     Parameter != 'K_Na',
+                                     !(Parameter == 'Charge_balance' & Unit == 'percent'),
+                                     !(Parameter == 'Sal' & Unit == 'ppt'),
+                                     !(Parameter == 'TDS' & Unit == 'mgL'))
+```
+
+
+```{r Recombine Full Dataset With Converted Units}
+
+# We need to change the values into strings so that we can bind it with the no_unit dataset
+
+Converted_units <- Converted_units %>% mutate(Value = as.character(Value))
+
+full_data_gathered <- bind_rows(Converted_units, no_unit)
+
+# Remove all empty data
+full_data_gathered <- full_data_gathered[!is.na(full_data_gathered$Value),]
+```
+
+<br/>
+
+# Rejoining Parameters and Units
+
+<br/>
+
+```{r Rejoin Parameters}
+
+# Rejoin parameters and units for use as column headers
+
+unit_combined <- full_data_gathered %>% 
+  mutate(Parameter = if_else(is.na(Unit), 
+                               Parameter, 
+                               paste(Parameter, Unit, sep = "__"))) %>% 
+  dplyr::select(-Unit)
+```
+
+<br/>
+
+# Write gathered data as a csv
+
+<br/>
+
+This is will be our finished dataset that we will analyze and can be found in the folder **Output**
+
+<br/>
+
+
+```{r Output Finished Data as CSV}
+
+write_csv(unit_combined, paste0("../Output/Full_Data_Gathered_",Sys.Date(),".csv"))
+```
+
+
+```{r Test Spreading}
+
+# Test to see that spreading works
+
+check4 <- unit_combined %>% 
+  spread(key = 'Parameter', value = 'Value', convert = TRUE)
+```
+
