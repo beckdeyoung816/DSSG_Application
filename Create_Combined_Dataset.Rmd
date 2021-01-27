@@ -588,10 +588,6 @@ unit_combined <- full_data_gathered %>%
 
 <br/>
 
-This is will be our finished dataset that we will analyze and can be found in the folder **Output**
-
-<br/>
-
 
 ```{r Output Finished Data as CSV}
 
